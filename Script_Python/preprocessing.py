@@ -1,3 +1,6 @@
+## --------------------
+## Caricamento Librerie
+## --------------------
 import pandas as pd
 import re
 import os
@@ -6,13 +9,33 @@ from os.path import isfile, join
 import time
 from datetime import datetime, date
 import shutil
+import sys
+import numpy as np
+import math
 
-path="C:/Users/pepee/Desktop/Tirocinio/Talend/Dati_Giornalieri/"
-path_out_pluvio="C:/Users/pepee/Desktop/Tirocinio/Talend/Dati_Giornalieri_Output/Pluvio/"
-path_out_termo="C:/Users/pepee/Desktop/Tirocinio/Talend/Dati_Giornalieri_Output/Termo/"
+
+## ------------------------
+## Caricamento Path da Bash
+## ------------------------
+
+#path="C:/Users/pepee/Desktop/Tirocinio/Talend/Dati_Giornalieri/"
+path= sys.argv[1]
+path_out=sys.argv[2]
+path_out_pluvio=path_out+"/Pluvio/"
+path_out_termo=path_out+"/Termo/"
+
+## -------------------------------------------------------------
+## Creazione lista file presenti nella cartella Dati_Giornalieri 
+## -------------------------------------------------------------
 
 files = [f for f in listdir(path) if isfile(join(path, f)) ]
 
+## -------------------------------------------------------------
+## Verifica Correttezza Nome File 
+## DatiPluvio_2015-01-01_00-00.csv
+## DatiTermo_2015-01-01_00-00.csv
+## Se presenti errori sposto file nella cartella Errore_Nome_File
+## -------------------------------------------------------------
 pluvio=[]
 termo=[]
 copy_files=files.copy()
@@ -31,66 +54,60 @@ for file in copy_files:
         
     else:
         
-        path_error_name_file="C:/Users/pepee/Desktop/Tirocinio/Talend/Dati_Giornalieri_Output/Errore_Nome_File/"
+        path_error_name_file=path_out+"/Errore_Nome_File/"
         old_file = os.path.join(path,file)
         new_file = os.path.join(path_error_name_file, (file))
         shutil.copy2(old_file, new_file)
         os.remove(old_file)
         files.remove(file)   
         
-import pickle
-path_metadata="C:/Users/pepee/Desktop/Tirocinio/Talend/Metadata/name_city.pick"
-#pickle.dump(name_city, open(path_metadata, "wb"))
-name_city = pickle.load(open(path_metadata, "rb"))
-new_col=[]
-for i in range(0 ,len(name_city)):
-    p=re.sub(r'[^a-zA-Z0-9]', '', name_city[i])
-    new_col.append(p)
-name_city=new_col
 
+## ------------------------------------------------------------------
+## Verifica Intestazione File Pluvio 
+## Se presenti errori sposto i files nella cartella: Errore_Header
+## ------------------------------------------------------------------
 # Pluvio
-city=name_city.copy()
-path_error_header="C:/Users/pepee/Desktop/Tirocinio/Talend/Dati_Giornalieri_Output/Errore_Header/"
-path_error_values="C:/Users/pepee/Desktop/Tirocinio/Talend/Dati_Giornalieri_Output/Errore_Values/"
+path_error_header=path_out+"/Errore_Header/"
+path_error_values=path_out+"/Errore_Values/"
 copy_pluvio=pluvio.copy()
 for file in pluvio:
     flag=False
-    city=name_city.copy()
-    city.append('Unnamed0')
     full_path=join(path,file)
     df=pd.read_csv(full_path)
 
     ## CHECK HEADER 1
-    ## Delete all the space in the header
-    name_columns=df.columns.copy()
-    new_col=[]
-    for i in range(0 ,len(name_columns)):
-        p=re.sub(r'[^a-zA-Z0-9]', '', name_columns[i])
-        new_col.append(p)
-    name_columns=new_col 
-    df.columns=name_columns
-    
-    for col in name_columns:
-        if col in city:
-            city.remove(col)
+    ## Checking if this first row contains numbers and delete all the space in the header
+    try:
+        l= [int(x) for x in df.columns]
+        flag=True
+    except:
+        flag=False
+    if(flag == False):
+        
+        new_col=[]
+        for i in range(0 ,len(df.columns)):
+            p=re.sub(r'[^a-zA-Z0-9]', '', df.columns[i])
+            new_col.append(p)
+        df.columns=new_col       
+
+    ## CHECK HEADER 2 
+    ## Checking if the second header  contains the same city as the previous row    
+    if(flag==False):
+        
+        if(df.iloc[0][0]=='Location Ids'):
+            
+            for col in df.iloc[0][1:]:
+                col_mf=re.sub(r'[^a-zA-Z0-9]', '', col)  
+                
+                if col_mf not in df.columns:
+                    flag=True
         else:
             flag=True
-            
-     ## CHECK HEADER 2
-    city=name_city.copy()
-    city.append('LocationIds')    
-    if(flag==False):
-        for col in df.iloc[0]:
-            col=re.sub(r'[^a-zA-Z0-9]', '', col)
-            if col in city:
-                city.remove(col)
-            else:
-                flag=True
                 
     ## CHECK HEADER 3
-    city=name_city.copy()
-    city.append('Time')              
+     ## Checking if the third header contains the following pattern- Time|Rainfall|Rainfall|...        
     if(flag==False):
+        
         if(df.iloc[1][0]=='Time'):
             for col in df.iloc[1][1:]:
                 if not (col=='Rainfall'):
@@ -98,8 +115,8 @@ for file in pluvio:
         else:
             flag=True
                 
-
-    ## SPOSTO FILE alla cartella errore header
+    ## SE ERRORI
+    ## Sposto i file nella cartella errore header se sono stati trovati errori nella formattazione dell'header
     if(flag== True):
         old_file = os.path.join(path,file)
         new_file = os.path.join(path_error_header,(file))
@@ -113,31 +130,29 @@ for file in pluvio:
     ## CHANGE SCHEMA
     df.rename(columns = {'Unnamed0':'Date'}, inplace = True)
     
-
     ## REMOVING ROWS HEADER
     df=df.iloc[2:]
-    
     ## CHANGE SCHEMA
-    df[df.columns[1:]] = df[df.columns[1:]].apply(pd.to_numeric)
-
-    ## CHECKING DateTime COLUMNS
     try:
+         ## CHECKING Number COLUMNS
+        df[df.columns[1:]] = df[df.columns[1:]].apply(pd.to_numeric)
+         ## CHECKING DateTime COLUMNS
         df['Date'] =  pd.to_datetime(df['Date'], format='%Y-%m-%d %H:%M:%S.%f')
-
     except:
-        flag=True
+        flag:True
         
     ## CHECKING RANGE VALUES
     tot=[]
-    import numpy as np
-    for col in df.columns[1:]:
-        series=df[col].loc[lambda x : (x >= 0) & (x <100)]
-        diff=series.max()-series.min()
-        tot.append(diff)
-    if not (np.nanmean(tot)>=0 and np.nanmean(tot)<50 ):
-        flag = True
+    if(flag==False):
+        for col in df.columns[1:]:
+            series=df[col].loc[lambda x : (x >= 0)]
+            diff=series.max()-series.min()
+           
+            if not ((diff >=0 and diff<=200) or math.isnan(diff)):
+                flag=True
 
-    ## IF Problem range values put in the folder error
+    ## Se ci sono errori nel range dei valori o nella colonna date
+    ## sposto i file nella cartella Errore_Values
     if(flag==True):
         old_file = os.path.join(path,file)
         new_file = os.path.join(path_error_values,file)
@@ -146,77 +161,67 @@ for file in pluvio:
         copy_pluvio.remove(file)
         continue
 
-    ## No problem in the right folder
+    ## Se il file ha passato i controlli converto lo schema da tre header a uno solo
+    ## con il seguente schema ['Date','Rainfall','Station']  
     if(flag == False):
-        dataf= pd.DataFrame(df[["Date",df.columns[1]]])
-        dataf["Stazion"]=df.columns[1]
-        dataf.columns=['Date','Rainfall','Station']
-        for col in df.columns[2:]:
+        dataf=pd.DataFrame(columns=['Date','Rainfall','Station'])
+        for col in df.columns[1:]:
             new= pd.DataFrame(df[["Date",col]])
-            new["Stazion"]=col
+            new["Station"]=col
             new.columns=['Date','Rainfall','Station']
             dataf=pd.concat([dataf, new])
-            
-            
-            
-
+        ## sposto il file nella cartella pluvio    
         final_path=join(path_out_pluvio,file)
         dataf.to_csv(final_path, index=False)
         old_file = os.path.join(path,file)
         os.remove(old_file)
         copy_pluvio.remove(file)
 
-pluvio=copy_pluvio.copy()
-        
 
-
-    
-    ## Termo
-
+## ------------------------------------------------------------------
+## Verifica Intestazione File Termo 
+## Se presenti errori sposto i files nella cartella: Errore_Header
+## ------------------------------------------------------------------
 # Pluvio
-city=name_city.copy()
-path_error_header="C:/Users/pepee/Desktop/Tirocinio/Talend/Dati_Giornalieri_Output/Errore_Header/"
-path_error_values="C:/Users/pepee/Desktop/Tirocinio/Talend/Dati_Giornalieri_Output/Errore_Values/"
 copy_termo=termo.copy()
 for file in termo:
     flag=False
-    city=name_city.copy()
-    city.append('Unnamed0')
     full_path=join(path,file)
     df=pd.read_csv(full_path)
 
     ## CHECK HEADER 1
-    ## Delete all the space in the header
-    name_columns=df.columns.copy()
-    new_col=[]
-    for i in range(0 ,len(name_columns)):
-        p=re.sub(r'[^a-zA-Z0-9]', '', name_columns[i])
-        new_col.append(p)
-    name_columns=new_col 
-    df.columns=name_columns
+    ## Checking if this first row contains numbers and delete all the space in the header
+    try:
+        l= [int(x) for x in df.columns]
+        flag=True
+    except:
+        flag=False
+    if(flag == False):
+        
+        new_col=[]
+        for i in range(0 ,len(df.columns)):
+            p=re.sub(r'[^a-zA-Z0-9]', '', df.columns[i])
+            new_col.append(p)
+        df.columns=new_col       
 
-    for col in name_columns:
-        if col in city:
-            city.remove(col)
+    ## CHECK HEADER 2 
+    ## Checking if the second header  contains the same city as the previous row    
+    if(flag==False):
+        
+        if(df.iloc[0][0]=='Location Ids'):
+            
+            for col in df.iloc[0][1:]:
+                col_mf=re.sub(r'[^a-zA-Z0-9]', '', col)  
+                
+                if col_mf not in df.columns:
+                    flag=True
         else:
             flag=True
-            
-     ## CHECK HEADER 2
-    city=name_city.copy()
-    city.append('LocationIds')    
-    if(flag==False):
-        for col in df.iloc[0]:
-
-            col=re.sub(r'[^a-zA-Z0-9]', '', col)
-            if col in city:
-                city.remove(col)
-            else:
-                flag=True
                 
     ## CHECK HEADER 3
-    city=name_city.copy()
-    city.append('Time')              
+     ## Checking if the third header contains the following pattern- Time|Rainfall|Rainfall|...        
     if(flag==False):
+        
         if(df.iloc[1][0]=='Time'):
             for col in df.iloc[1][1:]:
                 if not (col=='Temperature'):
@@ -224,8 +229,8 @@ for file in termo:
         else:
             flag=True
                 
-
-    ## SPOSTO FILE alla cartella errore header
+    ## SE ERRORI
+    ## Sposto i file nella cartella errore header se sono stati trovati errori nella formattazione dell'header
     if(flag== True):
         old_file = os.path.join(path,file)
         new_file = os.path.join(path_error_header,(file))
@@ -239,31 +244,27 @@ for file in termo:
     ## CHANGE SCHEMA
     df.rename(columns = {'Unnamed0':'Date'}, inplace = True)
     
-
     ## REMOVING ROWS HEADER
     df=df.iloc[2:]
-    
     ## CHANGE SCHEMA
-    df[df.columns[1:]] = df[df.columns[1:]].apply(pd.to_numeric)
-
-    ## CHECKING DateTime COLUMNS
     try:
+         ## CHECKING Number COLUMNS
+        df[df.columns[1:]] = df[df.columns[1:]].apply(pd.to_numeric)
+         ## CHECKING DateTime COLUMNS
         df['Date'] =  pd.to_datetime(df['Date'], format='%Y-%m-%d %H:%M:%S.%f')
-
     except:
-        flag=True
+        flag:True
         
     ## CHECKING RANGE VALUES
-    tot=[]
-    import numpy as np
-    for col in df.columns[1:]:
-        series=df[col].loc[lambda x : (x >= 0) & (x <100)]
-        diff=series.max()-series.min()
-        tot.append(diff)
-    if not (np.nanmean(tot)>=-30 and np.nanmean(tot)<70 ):
-        flag = True
 
-    ## IF Problem range values put in the folder error
+    if(flag==False):
+        for col in df.columns[1:]:
+            series=df[col].loc[lambda x : (x >= 0) ]
+            diff=series.max()-series.min()
+            if not ((diff >=0 and diff<=200) or math.isnan(diff)):
+                flag=True
+    ## Se ci sono errori nel range dei valori o nella colonna date
+    ## sposto i file nella cartella Errore_Values
     if(flag==True):
         old_file = os.path.join(path,file)
         new_file = os.path.join(path_error_values,file)
@@ -272,29 +273,18 @@ for file in termo:
         copy_termo.remove(file)
         continue
 
-    ## No problem in the right folder
+    ## Se il file ha passato i controlli converto lo schema da tre header a uno solo
+    ## con il seguente schema ['Date','Rainfall','Station']  
     if(flag == False):
-        dataf= pd.DataFrame(df[["Date",df.columns[1]]])
-        dataf["Stazion"]=df.columns[1]
-        dataf.columns=['Date','Temperature','Station']
-        for col in df.columns[2:]:
+        dataf=pd.DataFrame(columns=['Date','Temperature','Station'])
+        for col in df.columns[1:]:
             new= pd.DataFrame(df[["Date",col]])
-            new["Stazion"]=col
+            new["Station"]=col
             new.columns=['Date','Temperature','Station']
             dataf=pd.concat([dataf, new])
-            
-            
-            
-
+        ## sposto il file nella cartella pluvio    
         final_path=join(path_out_termo,file)
         dataf.to_csv(final_path, index=False)
         old_file = os.path.join(path,file)
         os.remove(old_file)
         copy_termo.remove(file)
-
-termo=copy_termo.copy()
-        
-
-
-    
-    
